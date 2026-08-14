@@ -1,0 +1,795 @@
+from pathlib import Path
+
+html = r'''<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>PID Controller Race</title>
+
+<style>
+/* =========================================================
+   1. CONFIG / STYLE
+   ========================================================= */
+:root{
+  --bg:#05070d;
+  --panel:#0c111c;
+  --panel2:#111827;
+  --line:#2a3345;
+  --grid:#1b2230;
+  --text:#eef2f7;
+  --muted:#98a3b3;
+  --p:#ef6672;
+  --pi:#f3c34f;
+  --pid:#91d65d;
+  --target:#d7dde7;
+}
+*{box-sizing:border-box}
+html,body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:Arial,Helvetica,sans-serif;
+}
+body{
+  display:flex;
+  justify-content:center;
+}
+.pid-app{
+  width:min(100%,920px);
+  padding:10px;
+}
+.toolbar{
+  position:sticky;
+  top:0;
+  z-index:10;
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  justify-content:center;
+  padding:8px;
+  background:rgba(5,7,13,.94);
+  backdrop-filter:blur(8px);
+}
+button{
+  border:1px solid #354158;
+  background:#111827;
+  color:#fff;
+  border-radius:10px;
+  padding:9px 13px;
+  cursor:pointer;
+  font-weight:700;
+}
+button.primary{background:#1d315d;border-color:#627dc1}
+button:hover{filter:brightness(1.12)}
+.stage{
+  border:1px solid #20283a;
+  border-radius:16px;
+  overflow:hidden;
+  background:#05070d;
+  box-shadow:0 18px 50px rgba(0,0,0,.35);
+}
+svg{
+  display:block;
+  width:100%;
+  height:auto;
+  background:#05070d;
+}
+.controls{
+  margin-top:10px;
+  padding:12px;
+  background:var(--panel);
+  border:1px solid #20283a;
+  border-radius:16px;
+}
+.controls-title{
+  font-weight:700;
+  margin:0 0 10px;
+}
+.control-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px;
+}
+.card{
+  background:#0a0f18;
+  border:1px solid #263047;
+  border-radius:12px;
+  padding:10px;
+}
+.card h3{
+  margin:0 0 8px;
+  font-size:14px;
+}
+.row{
+  display:grid;
+  grid-template-columns:86px 1fr 58px;
+  align-items:center;
+  gap:8px;
+  margin:7px 0;
+  font-size:12px;
+}
+.row input[type=range]{width:100%}
+.value{
+  text-align:right;
+  color:#d9e1ed;
+  font-variant-numeric:tabular-nums;
+}
+.note{
+  color:#8e9aae;
+  line-height:1.45;
+  margin-top:10px;
+  font-size:12px;
+}
+@media(max-width:680px){
+  .pid-app{padding:4px}
+  .control-grid{grid-template-columns:1fr}
+  button{padding:8px 10px;font-size:12px}
+}
+</style>
+</head>
+
+<body>
+<div class="pid-app">
+
+  <div class="toolbar">
+    <button id="playBtn" class="primary">Tạm dừng</button>
+    <button id="resetBtn">Chạy lại</button>
+    <button id="presetBtn">Preset</button>
+    <button id="pngBtn">Xuất PNG</button>
+    <button id="svgBtn">Xuất SVG</button>
+    <button id="fullBtn">Toàn màn hình</button>
+  </div>
+
+  <div class="stage" id="stage">
+    <svg id="sim" viewBox="0 0 900 1320" xmlns="http://www.w3.org/2000/svg" aria-label="PID Controller Race">
+      <defs>
+        <filter id="glowRed" x="-100%" y="-100%" width="300%" height="300%">
+          <feGaussianBlur stdDeviation="9" result="b"/>
+          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="glowYellow" x="-100%" y="-100%" width="300%" height="300%">
+          <feGaussianBlur stdDeviation="9" result="b"/>
+          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="glowGreen" x="-100%" y="-100%" width="300%" height="300%">
+          <feGaussianBlur stdDeviation="9" result="b"/>
+          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <clipPath id="graphClip">
+          <rect x="80" y="690" width="740" height="330" rx="4"/>
+        </clipPath>
+      </defs>
+
+      <rect x="0" y="0" width="900" height="1320" fill="#05070d"/>
+
+      <!-- ===================================================
+           2. TEXT
+           =================================================== -->
+      <text x="450" y="72" text-anchor="middle"
+            font-size="43" font-weight="700" fill="#eef2f7">
+        PID Controller Race
+      </text>
+
+      <text x="450" y="122" text-anchor="middle"
+            font-size="23" fill="#cbd2dc">
+        u = Kp·e + Ki·∫e dt + Kd·de/dt
+      </text>
+
+      <text x="450" y="162" text-anchor="middle"
+            font-size="17" fill="#98a3b3">
+        three controllers · one target · one plant
+      </text>
+
+      <text x="180" y="230" text-anchor="middle"
+            font-size="31" font-weight="700" fill="#ef6672">P</text>
+      <text x="450" y="230" text-anchor="middle"
+            font-size="31" font-weight="700" fill="#f3c34f">PI</text>
+      <text x="720" y="230" text-anchor="middle"
+            font-size="31" font-weight="700" fill="#91d65d">PID</text>
+
+      <!-- ===================================================
+           3. IMAGES
+           Không dùng ảnh ngoài.
+           =================================================== -->
+
+      <!-- ===================================================
+           4. LAYOUT: 3 lanes
+           =================================================== -->
+      <g id="lanes">
+        <line x1="180" y1="270" x2="180" y2="610" stroke="#3a4356" stroke-width="2"/>
+        <line x1="450" y1="270" x2="450" y2="610" stroke="#3a4356" stroke-width="2"/>
+        <line x1="720" y1="270" x2="720" y2="610" stroke="#3a4356" stroke-width="2"/>
+
+        <g stroke="#343c4e" stroke-width="1">
+          <line x1="170" y1="270" x2="190" y2="270"/><line x1="440" y1="270" x2="460" y2="270"/><line x1="710" y1="270" x2="730" y2="270"/>
+          <line x1="170" y1="318" x2="190" y2="318"/><line x1="440" y1="318" x2="460" y2="318"/><line x1="710" y1="318" x2="730" y2="318"/>
+          <line x1="170" y1="366" x2="190" y2="366"/><line x1="440" y1="366" x2="460" y2="366"/><line x1="710" y1="366" x2="730" y2="366"/>
+          <line x1="170" y1="414" x2="190" y2="414"/><line x1="440" y1="414" x2="460" y2="414"/><line x1="710" y1="414" x2="730" y2="414"/>
+          <line x1="170" y1="462" x2="190" y2="462"/><line x1="440" y1="462" x2="460" y2="462"/><line x1="710" y1="462" x2="730" y2="462"/>
+          <line x1="170" y1="510" x2="190" y2="510"/><line x1="440" y1="510" x2="460" y2="510"/><line x1="710" y1="510" x2="730" y2="510"/>
+          <line x1="170" y1="558" x2="190" y2="558"/><line x1="440" y1="558" x2="460" y2="558"/><line x1="710" y1="558" x2="730" y2="558"/>
+          <line x1="170" y1="610" x2="190" y2="610"/><line x1="440" y1="610" x2="460" y2="610"/><line x1="710" y1="610" x2="730" y2="610"/>
+        </g>
+
+        <line id="laneTarget" x1="80" y1="0" x2="820" y2="0"
+              stroke="#d7dde7" stroke-width="1.4" stroke-dasharray="8 8" opacity=".9"/>
+        <text id="laneTargetText" x="785" y="0" font-size="13" fill="#c5cbd5">target</text>
+
+        <circle id="pHalo" cx="180" cy="610" r="24" fill="#ef6672" opacity=".18" filter="url(#glowRed)"/>
+        <circle id="piHalo" cx="450" cy="610" r="24" fill="#f3c34f" opacity=".18" filter="url(#glowYellow)"/>
+        <circle id="pidHalo" cx="720" cy="610" r="24" fill="#91d65d" opacity=".18" filter="url(#glowGreen)"/>
+
+        <circle id="pDot" cx="180" cy="610" r="12" fill="#ef6672" stroke="#ffd7da" stroke-width="2"/>
+        <circle id="piDot" cx="450" cy="610" r="12" fill="#f3c34f" stroke="#fff1b3" stroke-width="2"/>
+        <circle id="pidDot" cx="720" cy="610" r="12" fill="#91d65d" stroke="#e1ffc9" stroke-width="2"/>
+      </g>
+
+      <!-- ===================================================
+           Graph
+           =================================================== -->
+      <g>
+        <line x1="80" y1="690" x2="80" y2="1020" stroke="#aeb7c6" stroke-width="1.2"/>
+        <line x1="80" y1="1020" x2="820" y2="1020" stroke="#aeb7c6" stroke-width="1.2"/>
+
+        <g stroke="#1c2331" stroke-width="1">
+          <line x1="80" y1="690" x2="820" y2="690"/>
+          <line x1="80" y1="756" x2="820" y2="756"/>
+          <line x1="80" y1="822" x2="820" y2="822"/>
+          <line x1="80" y1="888" x2="820" y2="888"/>
+          <line x1="80" y1="954" x2="820" y2="954"/>
+
+          <line x1="228" y1="690" x2="228" y2="1020"/>
+          <line x1="376" y1="690" x2="376" y2="1020"/>
+          <line x1="524" y1="690" x2="524" y2="1020"/>
+          <line x1="672" y1="690" x2="672" y2="1020"/>
+          <line x1="820" y1="690" x2="820" y2="1020"/>
+        </g>
+
+        <text x="49" y="700" font-size="14" fill="#98a3b3">y</text>
+        <text x="54" y="1024" font-size="13" fill="#98a3b3">0</text>
+
+        <line id="graphTarget" x1="80" y1="0" x2="820" y2="0"
+              stroke="#d7dde7" stroke-width="1.2" stroke-dasharray="6 7" opacity=".78"/>
+        <text id="graphTargetLabel" x="20" y="0" font-size="13" fill="#98a3b3">r=1.50</text>
+
+        <g clip-path="url(#graphClip)">
+          <path id="pPath" fill="none" stroke="#ef6672" stroke-width="3.4" stroke-linecap="round"/>
+          <path id="piPath" fill="none" stroke="#f3c34f" stroke-width="3.4" stroke-linecap="round"/>
+          <path id="pidPath" fill="none" stroke="#91d65d" stroke-width="3.4" stroke-linecap="round"/>
+
+          <circle id="pGraphDot" cx="80" cy="1020" r="7" fill="#ef6672"/>
+          <circle id="piGraphDot" cx="80" cy="1020" r="7" fill="#f3c34f"/>
+          <circle id="pidGraphDot" cx="80" cy="1020" r="7" fill="#91d65d"/>
+        </g>
+
+        <text id="timeText" x="820" y="1054" text-anchor="end" font-size="16" fill="#cbd2dc">t = 0.00 s</text>
+      </g>
+
+      <!-- ===================================================
+           Statistics
+           =================================================== -->
+      <g>
+        <line x1="80" y1="1080" x2="820" y2="1080" stroke="#252e3e"/>
+
+        <text x="90" y="1112" font-size="13" fill="#98a3b3">Controller</text>
+        <text x="205" y="1112" font-size="13" fill="#98a3b3">Output y</text>
+        <text x="445" y="1112" font-size="13" fill="#98a3b3">|error|</text>
+        <text x="690" y="1112" font-size="13" fill="#98a3b3">u</text>
+
+        <text x="90" y="1152" font-size="22" font-weight="700" fill="#ef6672">P</text>
+        <text id="pY" x="205" y="1152" font-size="20" fill="#eef2f7">y = +0.000</text>
+        <text id="pE" x="445" y="1152" font-size="20" fill="#ef6672">|e| = 1.500</text>
+        <text id="pU" x="690" y="1152" font-size="20" fill="#d9e1ed">0.000</text>
+
+        <text x="90" y="1195" font-size="22" font-weight="700" fill="#f3c34f">PI</text>
+        <text id="piY" x="205" y="1195" font-size="20" fill="#eef2f7">y = +0.000</text>
+        <text id="piE" x="445" y="1195" font-size="20" fill="#f3c34f">|e| = 1.500</text>
+        <text id="piU" x="690" y="1195" font-size="20" fill="#d9e1ed">0.000</text>
+
+        <text x="90" y="1238" font-size="22" font-weight="700" fill="#91d65d">PID</text>
+        <text id="pidY" x="205" y="1238" font-size="20" fill="#eef2f7">y = +0.000</text>
+        <text id="pidE" x="445" y="1238" font-size="20" fill="#91d65d">|e| = 1.500</text>
+        <text id="pidU" x="690" y="1238" font-size="20" fill="#d9e1ed">0.000</text>
+
+        <text id="statusText" x="450" y="1290" text-anchor="middle"
+              font-size="18" font-weight="700" fill="#d9e1ed">
+          P leaves offset · PI may overshoot · PID adds damping
+        </text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <div class="controls-title">Thông số mô phỏng</div>
+
+    <div class="control-grid">
+      <div class="card">
+        <h3>Đối tượng chung</h3>
+
+        <div class="row">
+          <label>Target</label>
+          <input id="target" type="range" min="0.5" max="2.0" value="1.5" step="0.05">
+          <span id="targetVal" class="value">1.50</span>
+        </div>
+
+        <div class="row">
+          <label>ωn</label>
+          <input id="wn" type="range" min="0.5" max="3.0" value="1.6" step="0.05">
+          <span id="wnVal" class="value">1.60</span>
+        </div>
+
+        <div class="row">
+          <label>ζ</label>
+          <input id="zeta" type="range" min="0.05" max="1.4" value="0.35" step="0.05">
+          <span id="zetaVal" class="value">0.35</span>
+        </div>
+
+        <div class="row">
+          <label>|u|max</label>
+          <input id="umax" type="range" min="1" max="10" value="4" step="0.25">
+          <span id="umaxVal" class="value">4.00</span>
+        </div>
+
+        <div class="row">
+          <label>Tốc độ</label>
+          <input id="speed" type="range" min="0.25" max="3" value="1" step="0.25">
+          <span id="speedVal" class="value">×1.00</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="color:#ef6672">P controller</h3>
+        <div class="row">
+          <label>Kp</label>
+          <input id="pKp" type="range" min="0" max="6" value="1.4" step="0.05">
+          <span id="pKpVal" class="value">1.40</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="color:#f3c34f">PI controller</h3>
+        <div class="row">
+          <label>Kp</label>
+          <input id="piKp" type="range" min="0" max="6" value="1.8" step="0.05">
+          <span id="piKpVal" class="value">1.80</span>
+        </div>
+        <div class="row">
+          <label>Ki</label>
+          <input id="piKi" type="range" min="0" max="4" value="1.2" step="0.05">
+          <span id="piKiVal" class="value">1.20</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="color:#91d65d">PID controller</h3>
+        <div class="row">
+          <label>Kp</label>
+          <input id="pidKp" type="range" min="0" max="6" value="2.6" step="0.05">
+          <span id="pidKpVal" class="value">2.60</span>
+        </div>
+        <div class="row">
+          <label>Ki</label>
+          <input id="pidKi" type="range" min="0" max="4" value="1.0" step="0.05">
+          <span id="pidKiVal" class="value">1.00</span>
+        </div>
+        <div class="row">
+          <label>Kd</label>
+          <input id="pidKd" type="range" min="0" max="3" value="0.55" step="0.05">
+          <span id="pidKdVal" class="value">0.55</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="note">
+      Mô hình chung:
+      <b>y'' + 2ζωn y' + ωn²y = ωn²u</b>.
+      Tất cả bộ điều khiển dùng cùng một đối tượng và cùng giá trị đặt.
+      Tín hiệu điều khiển được giới hạn bởi ±|u|max để mô phỏng bão hòa cơ cấu chấp hành.
+    </div>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   5. FUNCTIONS
+   ========================================================= */
+const CONFIG = {
+  duration: 8,
+  fixedDt: 0.002,
+  laneMin: 0,
+  laneMax: 2.2,
+  graphMin: 0,
+  graphMax: 2.2,
+  laneTop: 270,
+  laneBottom: 610,
+  graphX: 80,
+  graphY: 690,
+  graphW: 740,
+  graphH: 330,
+  DEBUG_TEXT_BOX:false,
+  DEBUG_IMAGE_FRAME:false,
+  DEBUG_LAYOUT_BOX:false
+};
+
+const TEXT = {
+  idle:'P leaves offset · PI may overshoot · PID adds damping',
+  pOffset:'P retains steady-state error',
+  piOvershoot:'PI overshoots because integral action accumulates',
+  pidDamping:'PID adds damping and reduces overshoot'
+};
+
+const IMAGES = {};
+
+const LAYOUT = {
+  pLaneX:180,
+  piLaneX:450,
+  pidLaneX:720
+};
+
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+function fmt(v,n=3){ return Number(v).toFixed(n); }
+
+function makeController(type,color,gains){
+  return {
+    type,color,
+    gains:{...gains},
+    y:0,
+    v:0,
+    integral:0,
+    prevError:null,
+    u:0,
+    hist:[{t:0,y:0}]
+  };
+}
+
+const controllers = {
+  p: makeController('P','#ef6672',{kp:1.4,ki:0,kd:0}),
+  pi: makeController('PI','#f3c34f',{kp:1.8,ki:1.2,kd:0}),
+  pid: makeController('PID','#91d65d',{kp:2.6,ki:1.0,kd:0.55})
+};
+
+let simTime = 0;
+let running = true;
+let lastFrame = null;
+
+function getPlant(){
+  return {
+    target:+document.getElementById('target').value,
+    wn:+document.getElementById('wn').value,
+    zeta:+document.getElementById('zeta').value,
+    umax:+document.getElementById('umax').value,
+    speed:+document.getElementById('speed').value
+  };
+}
+
+function syncGains(){
+  controllers.p.gains.kp=+document.getElementById('pKp').value;
+
+  controllers.pi.gains.kp=+document.getElementById('piKp').value;
+  controllers.pi.gains.ki=+document.getElementById('piKi').value;
+
+  controllers.pid.gains.kp=+document.getElementById('pidKp').value;
+  controllers.pid.gains.ki=+document.getElementById('pidKi').value;
+  controllers.pid.gains.kd=+document.getElementById('pidKd').value;
+}
+
+function syncValues(){
+  const ids=['target','wn','zeta','umax','pKp','piKp','piKi','pidKp','pidKi','pidKd'];
+  ids.forEach(id=>{
+    document.getElementById(id+'Val').textContent=(+document.getElementById(id).value).toFixed(2);
+  });
+  document.getElementById('speedVal').textContent='×'+(+document.getElementById('speed').value).toFixed(2);
+}
+
+function resetController(c){
+  c.y=0;
+  c.v=0;
+  c.integral=0;
+  c.prevError=null;
+  c.u=0;
+  c.hist=[{t:0,y:0}];
+}
+
+function resetSimulation(start=true){
+  Object.values(controllers).forEach(resetController);
+  simTime=0;
+  lastFrame=null;
+  running=start;
+  document.getElementById('playBtn').textContent=running?'Tạm dừng':'Tiếp tục';
+  updateVisuals();
+}
+
+function stepController(c,dt,p){
+  const e=p.target-c.y;
+  const de=(c.prevError===null)?0:(e-c.prevError)/dt;
+
+  c.integral += e*dt;
+
+  const rawU =
+    c.gains.kp*e +
+    c.gains.ki*c.integral +
+    c.gains.kd*de;
+
+  c.u=clamp(rawU,-p.umax,p.umax);
+
+  // Plant:
+  // y'' + 2*zeta*wn*y' + wn^2*y = wn^2*u
+  const a =
+    p.wn*p.wn*(c.u-c.y)
+    -2*p.zeta*p.wn*c.v;
+
+  c.v += a*dt;
+  c.y += c.v*dt;
+
+  c.prevError=e;
+}
+
+function mapLaneY(y){
+  const t=(clamp(y,CONFIG.laneMin,CONFIG.laneMax)-CONFIG.laneMin)/
+          (CONFIG.laneMax-CONFIG.laneMin);
+  return CONFIG.laneBottom-(CONFIG.laneBottom-CONFIG.laneTop)*t;
+}
+
+function mapGraphY(y){
+  const t=(clamp(y,CONFIG.graphMin,CONFIG.graphMax)-CONFIG.graphMin)/
+          (CONFIG.graphMax-CONFIG.graphMin);
+  return CONFIG.graphY+CONFIG.graphH-CONFIG.graphH*t;
+}
+
+function mapGraphX(t){
+  return CONFIG.graphX+(t/CONFIG.duration)*CONFIG.graphW;
+}
+
+function historyPath(hist){
+  if(hist.length<2) return '';
+  let d='';
+  for(let i=0;i<hist.length;i++){
+    const x=mapGraphX(hist[i].t);
+    const y=mapGraphY(hist[i].y);
+    d+=(i===0?'M':'L')+x.toFixed(2)+' '+y.toFixed(2)+' ';
+  }
+  return d;
+}
+
+function maxY(hist){
+  let m=-Infinity;
+  for(const p of hist) if(p.y>m)m=p.y;
+  return Number.isFinite(m)?m:0;
+}
+
+function updateVisuals(){
+  const p=getPlant();
+
+  const targetLaneY=mapLaneY(p.target);
+  const laneTarget=document.getElementById('laneTarget');
+  laneTarget.setAttribute('y1',targetLaneY);
+  laneTarget.setAttribute('y2',targetLaneY);
+
+  const laneTargetText=document.getElementById('laneTargetText');
+  laneTargetText.setAttribute('y',targetLaneY-8);
+
+  const graphTargetY=mapGraphY(p.target);
+  const graphTarget=document.getElementById('graphTarget');
+  graphTarget.setAttribute('y1',graphTargetY);
+  graphTarget.setAttribute('y2',graphTargetY);
+
+  const graphTargetLabel=document.getElementById('graphTargetLabel');
+  graphTargetLabel.setAttribute('y',graphTargetY+4);
+  graphTargetLabel.textContent='r='+fmt(p.target,2);
+
+  const ids={
+    p:{dot:'pDot',halo:'pHalo',path:'pPath',gdot:'pGraphDot',y:'pY',e:'pE',u:'pU'},
+    pi:{dot:'piDot',halo:'piHalo',path:'piPath',gdot:'piGraphDot',y:'piY',e:'piE',u:'piU'},
+    pid:{dot:'pidDot',halo:'pidHalo',path:'pidPath',gdot:'pidGraphDot',y:'pidY',e:'pidE',u:'pidU'}
+  };
+
+  for(const key of ['p','pi','pid']){
+    const c=controllers[key];
+    const yy=mapLaneY(c.y);
+
+    document.getElementById(ids[key].dot).setAttribute('cy',yy);
+    document.getElementById(ids[key].halo).setAttribute('cy',yy);
+
+    document.getElementById(ids[key].path).setAttribute('d',historyPath(c.hist));
+
+    document.getElementById(ids[key].gdot).setAttribute('cx',mapGraphX(simTime));
+    document.getElementById(ids[key].gdot).setAttribute('cy',mapGraphY(c.y));
+
+    document.getElementById(ids[key].y).textContent='y = '+(c.y>=0?'+':'')+fmt(c.y);
+    document.getElementById(ids[key].e).textContent='|e| = '+fmt(Math.abs(p.target-c.y));
+    document.getElementById(ids[key].u).textContent=fmt(c.u);
+  }
+
+  document.getElementById('timeText').textContent='t = '+fmt(simTime,2)+' s';
+
+  const pErr=Math.abs(p.target-controllers.p.y);
+  const piOver=maxY(controllers.pi.hist)-p.target;
+  const pidOver=maxY(controllers.pid.hist)-p.target;
+
+  let status=TEXT.idle;
+  if(simTime>3 && piOver>0.08) status=TEXT.piOvershoot;
+  if(simTime>4 && pidOver<piOver*0.75) status=TEXT.pidDamping;
+  if(simTime>5 && pErr>0.12) status=TEXT.pOffset;
+
+  document.getElementById('statusText').textContent=status;
+}
+
+function frame(ts){
+  if(lastFrame===null) lastFrame=ts;
+
+  const dtWall=Math.min((ts-lastFrame)/1000,0.05);
+  lastFrame=ts;
+
+  if(running && simTime<CONFIG.duration){
+    const plant=getPlant();
+    syncGains();
+
+    let advance=dtWall*plant.speed;
+
+    while(advance>0 && simTime<CONFIG.duration){
+      const dt=Math.min(CONFIG.fixedDt,advance,CONFIG.duration-simTime);
+
+      stepController(controllers.p,dt,plant);
+      stepController(controllers.pi,dt,plant);
+      stepController(controllers.pid,dt,plant);
+
+      simTime+=dt;
+      advance-=dt;
+
+      const lastT=controllers.p.hist[controllers.p.hist.length-1].t;
+      if(simTime-lastT>=0.012 || simTime>=CONFIG.duration){
+        controllers.p.hist.push({t:simTime,y:controllers.p.y});
+        controllers.pi.hist.push({t:simTime,y:controllers.pi.y});
+        controllers.pid.hist.push({t:simTime,y:controllers.pid.y});
+      }
+    }
+
+    if(simTime>=CONFIG.duration){
+      running=false;
+      document.getElementById('playBtn').textContent='Chạy lại';
+    }
+
+    updateVisuals();
+  }
+
+  requestAnimationFrame(frame);
+}
+
+/* =========================================================
+   Export SVG / PNG
+   ========================================================= */
+function serializeSVG(){
+  const svg=document.getElementById('sim').cloneNode(true);
+  svg.setAttribute('xmlns','http://www.w3.org/2000/svg');
+  svg.setAttribute('width','900');
+  svg.setAttribute('height','1320');
+  return new XMLSerializer().serializeToString(svg);
+}
+
+function exportSVG(){
+  const blob=new Blob([serializeSVG()],{type:'image/svg+xml;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download='pid-controller-race.svg';
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+function exportPNG(){
+  const blob=new Blob([serializeSVG()],{type:'image/svg+xml;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const img=new Image();
+
+  img.onload=()=>{
+    const scale=2;
+    const canvas=document.createElement('canvas');
+    canvas.width=900*scale;
+    canvas.height=1320*scale;
+
+    const ctx=canvas.getContext('2d');
+    ctx.scale(scale,scale);
+    ctx.fillStyle='#05070d';
+    ctx.fillRect(0,0,900,1320);
+    ctx.drawImage(img,0,0,900,1320);
+
+    URL.revokeObjectURL(url);
+
+    canvas.toBlob(file=>{
+      const a=document.createElement('a');
+      a.href=URL.createObjectURL(file);
+      a.download='pid-controller-race.png';
+      a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+    },'image/png');
+  };
+
+  img.src=url;
+}
+
+/* =========================================================
+   6. RENDER / EVENT
+   ========================================================= */
+document.getElementById('playBtn').addEventListener('click',()=>{
+  if(simTime>=CONFIG.duration){
+    resetSimulation(true);
+    return;
+  }
+  running=!running;
+  lastFrame=null;
+  document.getElementById('playBtn').textContent=running?'Tạm dừng':'Tiếp tục';
+});
+
+document.getElementById('resetBtn').addEventListener('click',()=>resetSimulation(true));
+
+document.getElementById('presetBtn').addEventListener('click',()=>{
+  const preset={
+    target:1.5,
+    wn:1.6,
+    zeta:0.35,
+    umax:4,
+    speed:1,
+    pKp:1.4,
+    piKp:1.8,
+    piKi:1.2,
+    pidKp:2.6,
+    pidKi:1.0,
+    pidKd:0.55
+  };
+  Object.entries(preset).forEach(([id,v])=>{
+    document.getElementById(id).value=v;
+  });
+  syncValues();
+  syncGains();
+  resetSimulation(true);
+});
+
+document.getElementById('pngBtn').addEventListener('click',exportPNG);
+document.getElementById('svgBtn').addEventListener('click',exportSVG);
+
+document.getElementById('fullBtn').addEventListener('click',()=>{
+  const stage=document.getElementById('stage');
+  if(document.fullscreenElement) document.exitFullscreen();
+  else stage.requestFullscreen?.();
+});
+
+[
+  'target','wn','zeta','umax','speed',
+  'pKp','piKp','piKi',
+  'pidKp','pidKi','pidKd'
+].forEach(id=>{
+  document.getElementById(id).addEventListener('input',()=>{
+    syncValues();
+    syncGains();
+    resetSimulation(true);
+  });
+});
+
+syncValues();
+syncGains();
+resetSimulation(true);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
+'''
+
+out = Path('/mnt/data/PID_Controller_Race_Blogger.html')
+out.write_text(html, encoding='utf-8')
+
+embed = '''<div style="width:100%;max-width:920px;margin:0 auto;">
+  <iframe
+    src="THAY_LINK_HTTPS_CUA_FILE_HTML_VAO_DAY"
+    style="width:100%;height:980px;border:0;display:block;"
+    loading="lazy"
+    allowfullscreen>
+  </iframe>
+</div>'''
+
+embed_path = Path('/mnt/data/PID_Blogger_Embed.txt')
+embed_path.write_text(embed, encoding='utf-8')
+
+print("Đã tạo:")
+print(out)
+print(embed_path)
